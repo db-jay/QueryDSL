@@ -1,5 +1,7 @@
 package study.querydsl;
 
+import com.querydsl.core.QueryResults;
+import com.querydsl.core.Tuple;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -7,19 +9,31 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 import study.querydsl.entity.Member;
 import study.querydsl.entity.QMember;
+import study.querydsl.entity.QTeam;
 import study.querydsl.entity.Team;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 
+import java.util.List;
+
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
+import static study.querydsl.entity.QMember.*;
 
 @SpringBootTest
 @Transactional
 public class QuerydslBasicTest {
     @PersistenceContext
     EntityManager em;
+
+    // 학습: 테스트마다 같은 EntityManager를 쓰므로 QueryFactory를 필드로 두고 재사용하면 쿼리 본문 읽기가 쉬워진다.
+    JPAQueryFactory queryFactory;
+
     @BeforeEach
     public void before() {
+        // 학습: Querydsl의 시작점은 EntityManager로 JPAQueryFactory를 만드는 것이다.
+        queryFactory = new JPAQueryFactory(em);
+
+        // 학습: 테스트 데이터를 미리 고정해두면 where, orderBy, groupBy 결과를 예측하면서 문법을 연습하기 쉽다.
         Team teamA = new Team("teamA");
         Team teamB = new Team("teamB");
         em.persist(teamA);
@@ -37,6 +51,7 @@ public class QuerydslBasicTest {
 
     @Test
     public void startJPQL() {
+        // 학습: 먼저 문자열 JPQL로 같은 조회를 작성해두면, 아래 Querydsl 코드가 무엇을 대체하는지 비교하기 쉽다.
         //member1을 찾아라.
         String qlString =
                 "select m from Member m " +
@@ -49,17 +64,188 @@ public class QuerydslBasicTest {
 
     @Test
     public void startQuerydsl() {
-        JPAQueryFactory queryFactory = new JPAQueryFactory(em);
+//        JPAQueryFactory queryFactory = new JPAQueryFactory(em);
         // 학습: QMember("m")의 "m"은 JPQL의 별칭(alias)과 같은 역할이라서 from member m 과 대응된다.
-        QMember m = new QMember("m");
+//        QMember m = new QMember("m");
 
         Member findMember = queryFactory
-                .selectFrom(m)
-                .from(m)
+                // 학습: selectFrom(member)는 select(member).from(member)를 줄여 쓴 기본 패턴이다.
+                .selectFrom(member) // static import
+                .from(member)
                 // 학습: Member.username 같은 문자열 필드가 QMember에서는 타입 안전한 경로가 되어 eq(), lt() 같은 조건 메서드를 바로 붙일 수 있다.
-                .where(m.username.eq("member1"))
+                // 학습: BooleanExpression은 and()로 조합할 수 있어서 복잡한 조건도 메서드 체인으로 자연스럽게 확장된다.
+                .where(member.username.eq("member1")
+                        .and(member.age.eq(10)))
                 .fetchOne();
 
         assertThat(findMember.getUsername()).isEqualTo("member1");
+    }
+
+    @Test
+    public void searchAndParam() {
+        Member findMember = queryFactory
+                .selectFrom(member)
+                .where(
+                        // 학습: where(varargs)는 조건을 쉼표로 나열해도 and 로 묶여서 읽기 쉽다.
+                        member.username.eq("member1"), // and 조건 ','로도 표시 가능
+                        member.age.eq(10)
+                )
+                .fetchOne();
+
+        assertThat(findMember.getUsername()).isEqualTo("member1");
+    }
+
+    @Test
+    public void resultFetch() {
+        // 학습: fetch는 리스트, fetchOne은 단건, fetchFirst는 limit 1 성격이라 반환 형태에 따라 메서드를 고른다.
+//        List<Member> fetch = queryFactory.selectFrom(member)
+//                .fetch();
+//
+//        Member fetchOne = queryFactory
+//                .selectFrom(member)
+//                .fetchOne();
+//
+//        queryFactory
+//                .selectFrom(member)
+////                .limit(1).fetchOne() = .fetchFirst()
+//                .fetchFirst();
+
+
+//        QueryResults<Member> results = queryFactory
+//                .selectFrom(member)
+//                .fetchResults();
+//
+//        results.getTotal(); // 카운트 쿼리 +1
+//        List<Member> content = results.getResults();
+
+        // 학습: fetchCount/fetchResults는 편하지만 최신 Querydsl/JPA 조합에서는 deprecated라서 동작과 한계를 함께 익혀두는 편이 좋다.
+        // 카운트쿼리
+        queryFactory
+                .selectFrom(member)
+                .fetchCount();
+    }
+
+
+    /**
+     * 회원 정렬 순서
+     * 1. 회원 나이 내림차순(desc)
+     * 2. 회원 이름 올림차순(asc)
+     * 단 2에서 회원 이름이 없으면 마지막에 출력(nulls last)
+     */
+    @Test
+    public void sort() {
+        em.persist(new Member(null, 100));
+        em.persist(new Member("member5", 100));
+        em.persist(new Member("member6", 100));
+
+        List<Member> result = queryFactory
+                .selectFrom(member)
+                .where(member.age.eq(100))
+                // 학습: orderBy에는 우선순위대로 여러 정렬 조건을 넣고, null 처리 규칙도 함께 줄 수 있다.
+                .orderBy(member.age.desc(), member.username.asc().nullsLast())
+                .fetch();
+
+        Member member5 = result.get(0);
+        Member member6 = result.get(1);
+        Member memberNull = result.get(2);
+
+        assertThat(member5.getUsername()).isEqualTo("member5");
+        assertThat(member6.getUsername()).isEqualTo("member6");
+        assertThat(memberNull.getUsername()).isNull();
+    }
+
+    @Test
+    public void paging1() {
+        List<Member> result = queryFactory
+                .selectFrom(member)
+                .orderBy(member.username.desc())
+                // 학습: offset/limit은 SQL의 페이징 구문으로 내려가며, 보통 정렬(orderBy)과 함께 써야 결과가 안정적이다.
+                .offset(1)
+                .limit(2)
+                .fetch();
+
+        assertThat(result.size()).isEqualTo(2);
+    }
+
+    @Test
+    public void paging2() {
+        // 학습: fetchResults는 내용 조회와 전체 카운트를 같이 가져와 편하지만 실제로는 쿼리가 2번 나간다.
+        QueryResults<Member> memberQueryResults = queryFactory
+                .selectFrom(member)
+                .orderBy(member.username.desc())
+                .offset(1)
+                .limit(2)
+                .fetchResults();
+
+//        카운트쿼리 1 + 컨텐츠 조회 쿼리 1 총 2번 쿼리
+        assertThat(memberQueryResults.getTotal()).isEqualTo(4);
+        assertThat(memberQueryResults.getResults().size()).isEqualTo(2);
+        assertThat(memberQueryResults.getLimit()).isEqualTo(2);
+        assertThat(memberQueryResults.getOffset()).isEqualTo(1);
+    }
+
+
+    /*
+    select
+        count(member1),
+        sum(member1.age),
+        avg(member1.age),
+        max(member1.age),
+        min(member1.age)
+    from
+        Member member1
+     */
+    /*
+    select
+    count(m1_0.member_id),
+    sum(m1_0.age),
+    avg(cast(m1_0.age as float(53))),
+    max(m1_0.age),
+    min(m1_0.age)
+    from
+    member m1_0
+    */
+    @Test
+    public void aggregation() {
+        List<Tuple> result = queryFactory // queryDsl이 제공하는 tuple
+                .select(
+                        // 학습: 집계 결과는 엔티티 한 건이 아니라 여러 컬럼 묶음이라 Tuple로 받는 것이 기본이다.
+                        member.count(),
+                        member.age.sum(),
+                        member.age.avg(),
+                        member.age.max(),
+                        member.age.min()
+                ).from(member)
+                .fetch();
+
+        Tuple tuple = result.get(0);
+        assertThat(tuple.get(member.count())).isEqualTo(4L);
+        assertThat(tuple.get(member.age.sum())).isEqualTo(100);
+        assertThat(tuple.get(member.age.avg())).isEqualTo(25);
+        assertThat(tuple.get(member.age.max())).isEqualTo(40);
+        assertThat(tuple.get(member.age.min())).isEqualTo(10);
+    }
+
+    @Test
+    public void group() throws Exception {
+        List<Tuple> result = queryFactory
+                .select(QTeam.team.name, member.age.avg())
+                .from(member)
+                // 학습: 연관관계 조인은 join(member.team, team)처럼 경로와 조인 대상을 함께 써서 표현한다.
+                .join(member.team, QTeam.team)
+                // 학습: groupBy 뒤의 select에는 그룹 기준 컬럼과 집계 컬럼을 같이 두는 패턴이 가장 자주 나온다.
+                .groupBy(QTeam.team.name)
+                .fetch();
+
+        Tuple teamA = result.get(0);
+        Tuple teamB = result.get(1);
+
+        assertThat(teamA.get(QTeam.team.name)).isEqualTo("teamA");
+        assertThat(teamA.get(member.age.avg())).isEqualTo(15);
+
+        assertThat(teamB.get(QTeam.team.name)).isEqualTo("teamB");
+        assertThat(teamB.get(member.age.avg())).isEqualTo(35);
+
+
     }
 }
