@@ -3,6 +3,8 @@ package study.querydsl;
 import com.querydsl.core.QueryResults;
 import com.querydsl.core.Tuple;
 import com.querydsl.jpa.impl.JPAQueryFactory;
+import jakarta.persistence.EntityManagerFactory;
+import jakarta.persistence.PersistenceUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -16,8 +18,9 @@ import jakarta.persistence.PersistenceContext;
 
 import java.util.List;
 
-import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static study.querydsl.entity.QMember.*;
+import static study.querydsl.entity.QTeam.team;
 
 @SpringBootTest
 @Transactional
@@ -229,23 +232,134 @@ public class QuerydslBasicTest {
     @Test
     public void group() throws Exception {
         List<Tuple> result = queryFactory
-                .select(QTeam.team.name, member.age.avg())
+                .select(team.name, member.age.avg())
                 .from(member)
                 // 학습: 연관관계 조인은 join(member.team, team)처럼 경로와 조인 대상을 함께 써서 표현한다.
-                .join(member.team, QTeam.team)
+                .join(member.team, team)
                 // 학습: groupBy 뒤의 select에는 그룹 기준 컬럼과 집계 컬럼을 같이 두는 패턴이 가장 자주 나온다.
-                .groupBy(QTeam.team.name)
+                .groupBy(team.name)
                 .fetch();
 
         Tuple teamA = result.get(0);
         Tuple teamB = result.get(1);
 
-        assertThat(teamA.get(QTeam.team.name)).isEqualTo("teamA");
+        assertThat(teamA.get(team.name)).isEqualTo("teamA");
         assertThat(teamA.get(member.age.avg())).isEqualTo(15);
 
-        assertThat(teamB.get(QTeam.team.name)).isEqualTo("teamB");
+        assertThat(teamB.get(team.name)).isEqualTo("teamB");
         assertThat(teamB.get(member.age.avg())).isEqualTo(35);
+    }
+    
+    
+    // 팀 A에 소속된 모든 회원
+    @Test
+    public void join() {
+        List<Member> result = queryFactory
+                .selectFrom(member)
+                // 학습: 연관관계 조인은 member.team 같은 객체 경로를 따라가므로, SQL의 ON 절 FK 조건을 직접 쓰지 않아도 된다.
+                .join(member.team, team) // join(조인 대상, 별칭으로 사용할 Q타입)
+                .where(team.name.eq("teamA"))
+                .fetch();
 
+        assertThat(result)
+                .extracting("username")
+                .containsExactly("member1", "member2");
+    }
+
+    // 세타 조인
+    @Test
+    public void theta_join() throws Exception {
+        em.persist(new Member("teamA"));
+        em.persist(new Member("teamB"));
+        em.persist(new Member("teamC"));
+
+        List<Member> result = queryFactory
+                .select(member)
+                // 학습: from(member, team)은 두 테이블을 독립적으로 올린 뒤 where에서 조건을 묶는 세타 조인 패턴이다.
+                .from(member, team)  // from 절에 여러 엔티티를 선택해서 세타 조인
+                .where(member.username.eq(team.name))
+                .fetch();
+
+        assertThat(result)
+                .extracting("username")
+                .containsExactly("teamA", "teamB");
+    }
+
+    // 조인 ON 절
+    /**
+     * 예) 회원과 팀을 조인하면서, 팀 이름이 teamA인 팀만 조인, 회원은 모두 조회
+     * JPQL: SELECT m, t FROM Member m LEFT JOIN m.team t on t.name = 'teamA'
+     * SQL: SELECT m.*, t.* FROM Member m LEFT JOIN Team t ON m.TEAM_ID=t.id and
+     t.name='teamA'
+     */
+    @Test
+    public void join_on() throws Exception {
+        List<Tuple> result = queryFactory
+                .select(member, team)
+                .from(member)
+                // 학습: leftJoin(...).on(...)은 조인 대상을 줄이는 조건을 ON 절로 보내서, 왼쪽 엔티티(member)는 유지하고 오른쪽(team)만 거를 수 있다.
+                .leftJoin(member.team, team).on(team.name.eq("teamA"))
+                .fetch();
+
+        for (Tuple tuple : result) {
+            System.out.println("tuple = " + tuple);
+        }
+
+    }
+
+    // 연관관계 없는 엔티티 외부 조인
+    @Test
+    public void join_on_no_relation() throws Exception {
+        em.persist(new Member("teamA"));
+        em.persist(new Member("teamB"));
+        em.persist(new Member("teamC"));
+
+        List<Tuple> result = queryFactory
+                .select(member, team)
+                .from(member)
+                // 학습: leftJoin(team).on(...)처럼 경로 없이 조인하면 연관관계가 없어도 이름 같은 임의 조건으로 외부 조인을 만들 수 있다.
+                .leftJoin(team).on(member.username.eq(team.name))
+                .fetch();
+
+        for (Tuple tuple : result) {
+            System.out.println("tuple = " + tuple);
+        }
+    }
+
+    @PersistenceUnit
+    EntityManagerFactory emf;
+
+    // 페치조인이 없는 경우
+    @Test void fetchJoinNo() {
+        em.flush();
+        em.clear();
+
+        Member findMember = queryFactory
+                .selectFrom(member)
+                .where(member.username.eq("member1"))
+                .fetchOne();
+
+        // 학습: fetch join이 없으면 member만 먼저 조회되고 team은 프록시로 남아서, 실제 접근 전까지 로딩되지 않는다.
+        boolean loaded =  emf.getPersistenceUnitUtil().isLoaded(findMember.getTeam());
+        assertThat(loaded).as("페치조인 미적용").isFalse();
+        System.out.println("loaded = " + loaded);
+    }
+    
+    // 페치조인이 있는 경우
+    @Test void fetchJoin() {
+        em.flush();
+        em.clear();
+
+        Member findMember = queryFactory
+                .selectFrom(member)
+                // 학습: fetchJoin()은 조인한 연관 엔티티를 한 번에 같이 조회해서 N+1 확인용 테스트에서 자주 쓴다.
+                .join(member.team, team).fetchJoin() // 페치 조인
+                .where(member.username.eq("member1"))
+                .fetchOne();
+
+        boolean loaded =  emf.getPersistenceUnitUtil().isLoaded(findMember.getTeam());
+        assertThat(loaded).as("페치조인 미적용").isTrue();
+        System.out.println("loaded = " + loaded);
 
     }
 }
