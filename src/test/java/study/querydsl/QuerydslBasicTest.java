@@ -1,5 +1,6 @@
 package study.querydsl;
 
+import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.QueryResults;
 import com.querydsl.core.Tuple;
 import com.querydsl.core.types.Projections;
@@ -410,6 +411,7 @@ public class QuerydslBasicTest {
                 .select(Projections.constructor(UserDto.class,
                         member.username,
                         member.age))
+                .from(member)
                 .fetch();
 
         result.forEach(System.out::println);
@@ -426,5 +428,33 @@ public class QuerydslBasicTest {
                 .fetch();
 
         result.forEach(System.out::println);
+    }
+
+    // 동적 쿼리 - BooleanBuilder 사용
+    @Test
+    public void dynamicQuery_BooleanBuilder() {
+        String username = "member1";
+        Integer age = 10;
+
+        List<Member> result = searchMember1(username, age);
+        assertThat(result.size()).isEqualTo(1);
+    }
+
+    private List<Member> searchMember1(String usernameCond, Integer ageCond) {
+        // 학습: BooleanBuilder는 조건을 if 문으로 하나씩 누적하기 쉬워서 동적 쿼리의 가장 직관적인 첫 번째 방법.
+        BooleanBuilder builder = new BooleanBuilder();
+        if(usernameCond != null) {
+            builder.and(member.username.eq(usernameCond));
+        }
+
+        if(ageCond != null) {
+            builder.and(member.age.eq(ageCond));
+        }
+
+        return queryFactory
+                .selectFrom(member)
+                // 학습: where(builder)에 누적된 조건만 최종 JPQL에 반영되므로, null 값은 제외됨.
+                .where(builder)
+                .fetch();
     }
 }
