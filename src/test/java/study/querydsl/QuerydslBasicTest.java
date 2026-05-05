@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 import study.querydsl.dto.MemberDto;
+import study.querydsl.dto.QMemberDto;
 import study.querydsl.dto.UserDto;
 import study.querydsl.entity.Member;
 import study.querydsl.entity.Team;
@@ -409,6 +410,18 @@ public class QuerydslBasicTest {
                 .select(Projections.constructor(UserDto.class,
                         member.username,
                         member.age))
+                .fetch();
+
+        result.forEach(System.out::println);
+    }
+
+    // QueryProjection 사용
+    // 학습: QueryProjection은 DTO가 Querydsl에 의존하는 대신, 생성자 파라미터 오류를 QMemberDto 생성 시점에 더 빨리 드러내 준다.
+    @Test
+    public void findDtoByQueryProjection() {
+        List<MemberDto> result = queryFactory
+                // 학습: new QMemberDto(...)는 일반 constructor projection과 비슷하지만, 생성된 Q타입 덕분에 select 절 매핑을 컴파일 타임에 확인할 수 있다.
+                .select(new QMemberDto(member.username, member.age))
                 .from(member)
                 .fetch();
 
