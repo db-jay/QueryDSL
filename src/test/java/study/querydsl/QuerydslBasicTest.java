@@ -2,6 +2,7 @@ package study.querydsl;
 
 import com.querydsl.core.QueryResults;
 import com.querydsl.core.Tuple;
+import com.querydsl.core.types.Projections;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceUnit;
@@ -9,9 +10,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
+import study.querydsl.dto.MemberDto;
+import study.querydsl.dto.UserDto;
 import study.querydsl.entity.Member;
-import study.querydsl.entity.QMember;
-import study.querydsl.entity.QTeam;
 import study.querydsl.entity.Team;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -361,5 +362,56 @@ public class QuerydslBasicTest {
         assertThat(loaded).as("페치조인 미적용").isTrue();
         System.out.println("loaded = " + loaded);
 
+    }
+
+    // JPQL
+    @Test
+    public void findDtoByJPQL() {
+        // 학습: JPQL의 new 명령은 DTO 패키지명과 생성자 시그니처를 문자열로 직접 맞춰야 해서 리팩터링에 약하다.
+        em.createQuery("select new study.querydsl.dto.MemberDto(m.username, m.age) from Member m", MemberDto.class)
+                .getResultList()
+                .forEach(System.out::println);
+    }
+
+    // 프로퍼티 접근
+    @Test
+    public void findDtoBySetter() {
+        List<MemberDto> result = queryFactory
+                // 학습: Projections.bean은 setter 기반 프로젝션이라 DTO에 기본 생성자와 setter가 필요하다.
+                .select(Projections.bean(MemberDto.class,
+                        member.username,
+                        member.age))
+                .from(member)
+                .fetch();
+
+        result.forEach(System.out::println);
+    }
+
+    // 필드 접근
+    @Test
+    public void findDtoByField() {
+        List<UserDto> result = queryFactory
+                // 학습: Projections.fields는 setter 없이도 필드명 기준으로 값을 넣지만, 이름이 다르면 as("별칭")으로 맞춰야 한다.
+                .select(Projections.fields(UserDto.class,
+                        member.username.as("name"), // 이름이 다를 때 별칭 부여,
+                        member.age))
+                .from(member)
+                .fetch();
+
+        result.forEach(System.out::println);
+    }
+
+    // 생성자 접근
+    @Test
+    public void findDtoByConstructor () {
+        List<UserDto> result = queryFactory
+                // 학습: constructor 방식은 필드명이 달라도 사용할 수 있지만, 컴파일 시점에 생성자 매핑 오류를 완전히 잡아주지는 못한다.
+                .select(Projections.constructor(UserDto.class,
+                        member.username,
+                        member.age))
+                .from(member)
+                .fetch();
+
+        result.forEach(System.out::println);
     }
 }
