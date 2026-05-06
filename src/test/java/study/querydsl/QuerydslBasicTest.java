@@ -430,7 +430,6 @@ public class QuerydslBasicTest {
         result.forEach(System.out::println);
     }
 
-    // 동적 쿼리 - BooleanBuilder 사용
     @Test
     public void dynamicQuery_BooleanBuilder() {
         String username = "member1";
