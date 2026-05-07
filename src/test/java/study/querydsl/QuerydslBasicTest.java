@@ -9,15 +9,15 @@ import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
-import study.querydsl.dto.MemberDto;
-import study.querydsl.dto.QMemberDto;
-import study.querydsl.dto.UserDto;
+import study.querydsl.dto.*;
 import study.querydsl.entity.Member;
 import study.querydsl.entity.Team;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import study.querydsl.repository.MemberJpaRepository;
 
 import java.util.List;
 
@@ -33,6 +33,8 @@ public class QuerydslBasicTest {
 
     // 학습: 테스트마다 같은 EntityManager를 쓰므로 QueryFactory를 필드로 두고 재사용하면 쿼리 본문 읽기가 쉬워진다.
     JPAQueryFactory queryFactory;
+    @Autowired
+    private MemberJpaRepository memberJpaRepository;
 
     @BeforeEach
     public void before() {
@@ -455,5 +457,20 @@ public class QuerydslBasicTest {
                 // 학습: where(builder)에 누적된 조건만 최종 JPQL에 반영되므로, null 값은 제외됨.
                 .where(builder)
                 .fetch();
+    }
+
+    @Test
+    public void searchTest() {
+
+        MemberSearchCondition condition = new MemberSearchCondition();
+
+        condition.setAgeGoe(35);
+        condition.setAgeLoe(40);
+        condition.setTeamName("teamB");
+
+        // 학습: 테스트에서 조건 DTO를 조합해보면 웹 요청 없이도 동적 쿼리 필터가 정확히 적용되는지 빠르게 검증할 수 있다.
+//        List<MemberTeamDto> result = memberJpaRepository.searchByBuilder(condition); // 빌더 동적 쿼리
+        List<MemberTeamDto> result = memberJpaRepository.search(condition); // where절 동적 쿼리
+        assertThat(result).extracting("username").containsExactly("member4");
     }
 }
